@@ -6,7 +6,7 @@ include(GNUInstallDirs)
 # setup version
 set(SYSREPO_MAJOR_VERSION 0)
 set(SYSREPO_MINOR_VERSION 7)
-set(SYSREPO_MICRO_VERSION 3)
+set(SYSREPO_MICRO_VERSION 7)
 set(SYSREPO_VERSION ${SYSREPO_MAJOR_VERSION}.${SYSREPO_MINOR_VERSION}.${SYSREPO_MICRO_VERSION})
 set(SYSREPO_SOVERSION ${SYSREPO_MAJOR_VERSION}.${SYSREPO_MINOR_VERSION})
 
@@ -175,12 +175,21 @@ set(ENABLE_CONFIG_CHANGE_NOTIF 1 CACHE BOOL
 set(STORE_CONFIG_CHANGE_NOTIF 1 CACHE BOOL
     "Save config-change notifications (RFC 6470) in the notification store (slows down the commit process).")
 
-# timeouts
-set(REQUEST_TIMEOUT 3 CACHE INTEGER
-    "Timeout (in seconds) for standard Sysrepo API requests.")
+set(FILE_FORMAT_EXT "lyb" CACHE STRING
+    "Datastore file format extension used. Can be json, xml, or lyb.")
+if (FILE_FORMAT_EXT STREQUAL "json")
+    set(FILE_FORMAT_LY "LYD_JSON")
+elseif (FILE_FORMAT_EXT STREQUAL "xml")
+    set(FILE_FORMAT_LY "LYD_XML")
+elseif (FILE_FORMAT_EXT STREQUAL "lyb")
+    set(FILE_FORMAT_LY "LYD_LYB")
+else()
+    message(FATAL_ERROR "Unknown file format \"${FILE_FORMAT_EXT}\", must be json, xml, or lyb.")
+endif()
 
-set(LONG_REQUEST_TIMEOUT 15 CACHE INTEGER
-    "Timeout (in seconds) for Sysrepo API requests that can take longer than standard requests (commit, copy-config, rpc, action).")
+# timeouts
+set(REQUEST_TIMEOUT 15 CACHE INTEGER
+    "Timeout (in seconds) for Sysrepo API requests. Set to 0 for no timeout.")
 
 set(COMMIT_VERIFY_TIMEOUT 10 CACHE INTEGER
     "Timeout (in seconds) that a commit request can wait for answer from commit verifiers and change notification subscribers.")
@@ -193,6 +202,12 @@ set(NOTIF_AGE_TIMEOUT 60 CACHE INTEGER
 
 set(NOTIF_TIME_WINDOW 10 CACHE INTEGER
     "Time window (in minutes) for notifications to be grouped into one data file (larger window produces larger data files).")
+
+set(GET_ITEMS_FETCH_LIMIT 100 CACHE INTEGER
+    "Number of items being fetched in one message from Sysrepo Engine when processing sr_get_items_iter calls. Increasing this can improve efficiency when working with large datastores at the cost of higher memory usage peaks.")
+
+set(GET_SUBTREE_CHUNK_CHILD_LIMIT 20 CACHE INTEGER
+    "Maximum number of children nodes (of any parent node) being fetched in one message from Sysrepo Engine when processing sr_get_subtree(s)_*_chunk(s). Increasing this can improve efficiency when working with large datastores at the cost of higher memory usage peaks.")
 
 # add subdirectories
 add_subdirectory(src)
@@ -240,6 +255,13 @@ endif(ENABLE_TESTS)
 # Documentation
 find_package(Doxygen)
 if(DOXYGEN_FOUND)
+    find_program(DOT_PATH dot PATH_SUFFIXES graphviz2.38/bin graphviz/bin)
+    if(DOT_PATH)
+        set(HAVE_DOT "YES")
+    else()
+        set(HAVE_DOT "NO")
+        message(AUTHOR_WARNING "Doxygen: to generate UML diagrams please install graphviz")
+    endif()
     configure_file(${CMAKE_CURRENT_SOURCE_DIR}/Doxyfile.in ${CMAKE_CURRENT_BINARY_DIR}/Doxyfile @ONLY)
     add_custom_target(doc
         ${DOXYGEN_EXECUTABLE} ${CMAKE_CURRENT_BINARY_DIR}/Doxyfile
@@ -288,7 +310,7 @@ install (FILES ${INTERNAL_YANGS} DESTINATION ${INTERNAL_SCHEMA_SEARCH_DIR})
 
 # install NACM YANG module
 if(ENABLE_NACM)
-    INSTALL_YANG("ietf-netconf-acm" "@2012-02-22" "644")
+    INSTALL_YANG("ietf-netconf-acm" "@2018-02-14" "644")
 endif(ENABLE_NACM)
 
 find_package(PkgConfig QUIET)
@@ -315,6 +337,11 @@ endif()
 INSTALL_YANG("ietf-netconf-notifications" "" "666")
 INSTALL_YANG("nc-notifications" "" "666")
 INSTALL_YANG("notifications" "" "666")
+
+# uninstall
+add_custom_target(uninstall "${CMAKE_COMMAND}" -P "${CMAKE_MODULE_PATH}/uninstall.cmake")
+add_custom_target(uninstall_with_repo "${CMAKE_COMMAND}" -P "${CMAKE_MODULE_PATH}/uninstall.cmake"
+    COMMAND rm -rf ${REPOSITORY_LOC})
 
 if(GEN_LANGUAGE_BINDINGS)
     add_subdirectory(swig)

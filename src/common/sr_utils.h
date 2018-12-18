@@ -26,9 +26,6 @@
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdbool.h>
-//! @cond doxygen_suppress
-#define __USE_XOPEN
-//! @endcond
 #include <time.h>
 
 #include <libyang/libyang.h>
@@ -338,9 +335,10 @@ int sr_get_peer_eid(int fd, uid_t *uid, gid_t *gid);
  * @brief Saves the data tree into file. Workaround function that adds the root element to data_tree.
  * @param [in] file_name
  * @param [in] data_tree
+ * @param [in] format
  * @return err_code
  */
-int sr_save_data_tree_file(const char *file_name, const struct lyd_node *data_tree);
+int sr_save_data_tree_file(const char *file_name, const struct lyd_node *data_tree, LYD_FORMAT format);
 
 /**
  * @brief Check if the set contains the specified object.
@@ -373,6 +371,16 @@ bool sr_lys_data_node(struct lys_node *node);
  * @param [in] augment True if this node may be from an augment definition.
  */
 struct lys_node *sr_lys_node_get_data_parent(struct lys_node *node, bool augment);
+
+/**
+ * @brief Wrapper for lyd_parse_fd() that performs file format conversion if required.
+ *
+ * @param [in] ctx
+ * @param [in] fd
+ * @param [in] format
+ * @param [in] options
+ */
+struct lyd_node *sr_lyd_parse_fd(struct ly_ctx *ctx, int fd, LYD_FORMAT format, int options);
 
 /**
  * @brief Copies the datatree pointed by root including its siblings.
@@ -796,5 +804,17 @@ int sr_time_to_str(time_t time, char *buff, size_t buff_size);
 int sr_str_to_time(char *time_str, time_t *time);
 
 /**@} utils */
+
+/**
+ * @brief Clone features
+ *
+ * Clone the features of a module.
+ *
+ * @param[in] module_src source module for feature cloning
+ * @param[in] module_tgt target module for feature cloning
+ *
+ * @return Error code (SR_ERR_OK on success)
+ */
+int sr_features_clone(const struct lys_module *module_src, const struct lys_module *module_tgt);
 
 #endif /* SR_UTILS_H_ */

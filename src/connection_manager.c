@@ -501,6 +501,10 @@ cm_conn_out_buff_flush(cm_ctx_t *cm_ctx, sm_connection_t *connection)
     buff_size = buff->pos;
     buff_pos = connection->cm_data->out_buff.start;
 
+    if (buff_size - buff_pos == 0) {
+        return rc;
+    }
+
     SR_LOG_DBG("Sending %zu bytes of data.", (buff_size - buff_pos));
 
     do {
@@ -2078,6 +2082,20 @@ cm_msg_send(cm_ctx_t *cm_ctx, Sr__Msg *msg)
     }
 
     return rc;
+}
+
+bool
+cm_msg_search(cm_ctx_t *cm_ctx, Sr__Msg *msg)
+{
+    bool search_result = false;
+
+    if (cm_ctx != NULL && msg != NULL) {
+        pthread_mutex_lock(&cm_ctx->msg_queue_mutex);
+        search_result = sr_cbuff_search(cm_ctx->msg_queue, &msg);
+        pthread_mutex_unlock(&cm_ctx->msg_queue_mutex);
+    }
+
+    return search_result;
 }
 
 int

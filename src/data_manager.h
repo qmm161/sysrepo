@@ -231,6 +231,7 @@ typedef struct dm_commit_context_s {
     bool nacm_edited;           /**< flag whether the running NACM configuration was edited. */
     bool in_btree;              /**< set to tree if the context was inserted into btree */
     bool should_be_removed;     /**< flag denoting whether c_ctx can be removed from btree */
+    int result;                 /**< result of verify or apply commit phase */
     dm_session_t *backup_session; /**< session with backed up modifications from before the commit */
 } dm_commit_context_t;
 
@@ -264,6 +265,16 @@ typedef struct dm_commit_context_s {
             (NEXT) = (ELEM)->next;                                            \
         }                                                                     \
     }while(0)
+
+int dm_schema_info_init(const char *schema_search_dir, dm_schema_info_t **schema_info);
+
+void dm_free_schema_info(void *schema_info);
+
+int dm_load_schema_file(const char *schema_filepath, dm_schema_info_t *si, const struct lys_module **mod);
+
+int dm_load_module_ident_deps_r(md_module_t *module, dm_schema_info_t *si, sr_btree_t *loaded_deps);
+
+int dm_load_module_deps_r(md_module_t *module, dm_schema_info_t *si, sr_btree_t *loaded_deps);
 
 /**
  * @brief The function is called to load the requested module into the context.
@@ -863,8 +874,8 @@ int dm_copy_all_models(dm_ctx_t *dm_ctx, dm_session_t *session, sr_datastore_t s
 
 /**
  * @brief Validates content of a RPC request or reply.
- * @param [in] dm_ctx DM context.
- * @param [in] session DM session.
+ * @param [in] rp_ctx RP context.
+ * @param [in] session RP session.
  * @param [in] rpc_xpath XPath of the RPC.
  * @param [in] args Input/output arguments of the RPC.
  * @param [in] arg_cnt Number of input/output arguments provided.
@@ -876,13 +887,13 @@ int dm_copy_all_models(dm_ctx_t *dm_ctx, dm_session_t *session, sr_datastore_t s
  * @param [out] with_def_tree_cnt Number of items inside the *with_def_tree* array.
  * @return Error code (SR_ERR_OK on success)
  */
-int dm_validate_rpc(dm_ctx_t *dm_ctx, dm_session_t *session, const char *rpc_xpath, sr_val_t *args, size_t arg_cnt, bool input,
+int dm_validate_rpc(rp_ctx_t *rp_ctx, rp_session_t *session, const char *rpc_xpath, sr_val_t *args, size_t arg_cnt, bool input,
         sr_mem_ctx_t *sr_mem, sr_val_t **with_def, size_t *with_def_cnt, sr_node_t **with_def_tree, size_t *with_def_tree_cnt);
 
 /**
  * @brief Validates content of a RPC request or reply with arguments represented using sr_node_t.
- * @param [in] dm_ctx DM context.
- * @param [in] session DM session.
+ * @param [in] rp_ctx RP context.
+ * @param [in] session RP session.
  * @param [in] rpc_xpath XPath of the RPC.
  * @param [in] args Input/output arguments of the RPC.
  * @param [in] arg_cnt Number of input/output arguments provided.
@@ -894,13 +905,13 @@ int dm_validate_rpc(dm_ctx_t *dm_ctx, dm_session_t *session, const char *rpc_xpa
  * @param [out] with_def_tree_cnt Number of items inside the *with_def_tree* array.
  * @return Error code (SR_ERR_OK on success)
  */
-int dm_validate_rpc_tree(dm_ctx_t *dm_ctx, dm_session_t *session, const char *rpc_xpath, sr_node_t *args, size_t arg_cnt, bool input,
+int dm_validate_rpc_tree(rp_ctx_t *rp_ctx, rp_session_t *session, const char *rpc_xpath, sr_node_t *args, size_t arg_cnt, bool input,
         sr_mem_ctx_t *sr_mem, sr_val_t **with_def, size_t *with_def_cnt, sr_node_t **with_def_tree, size_t *with_def_tree_cnt);
 
 /**
  * @brief Validates content of an Action request or reply.
- * @param [in] dm_ctx DM context.
- * @param [in] session DM session.
+ * @param [in] rp_ctx RP context.
+ * @param [in] session RP session.
  * @param [in] action_xpath XPath of the Action.
  * @param [in] args Input/output arguments of the Action.
  * @param [in] arg_cnt Number of input/output arguments provided.
@@ -912,13 +923,13 @@ int dm_validate_rpc_tree(dm_ctx_t *dm_ctx, dm_session_t *session, const char *rp
  * @param [out] with_def_tree_cnt Number of items inside the *with_def_tree* array.
  * @return Error code (SR_ERR_OK on success)
  */
-int dm_validate_action(dm_ctx_t *dm_ctx, dm_session_t *session, const char *action_xpath, sr_val_t *args, size_t arg_cnt, bool input,
+int dm_validate_action(rp_ctx_t *rp_ctx, rp_session_t *session, const char *action_xpath, sr_val_t *args, size_t arg_cnt, bool input,
         sr_mem_ctx_t *sr_mem, sr_val_t **with_def, size_t *with_def_cnt, sr_node_t **with_def_tree, size_t *with_def_tree_cnt);
 
 /**
  * @brief Validates content of an Action request or reply with arguments represented using sr_node_t.
- * @param [in] dm_ctx DM context.
- * @param [in] session DM session.
+ * @param [in] rp_ctx RP context.
+ * @param [in] session RP session.
  * @param [in] action_xpath XPath of the Action.
  * @param [in] args Input/output arguments of the Action.
  * @param [in] arg_cnt Number of input/output arguments provided.
@@ -930,13 +941,13 @@ int dm_validate_action(dm_ctx_t *dm_ctx, dm_session_t *session, const char *acti
  * @param [out] with_def_tree_cnt Number of items inside the *with_def_tree* array.
  * @return Error code (SR_ERR_OK on success)
  */
-int dm_validate_action_tree(dm_ctx_t *dm_ctx, dm_session_t *session, const char *action_xpath, sr_node_t *args, size_t arg_cnt, bool input,
+int dm_validate_action_tree(rp_ctx_t *rp_ctx, rp_session_t *session, const char *action_xpath, sr_node_t *args, size_t arg_cnt, bool input,
                          sr_mem_ctx_t *sr_mem, sr_val_t **with_def, size_t *with_def_cnt, sr_node_t **with_def_tree, size_t *with_def_tree_cnt);
 
 /**
  * @brief Validates content of an event notification request.
- * @param [in] dm_ctx DM context.
- * @param [in] session DM session.
+ * @param [in] rp_ctx RP context.
+ * @param [in] session RP session.
  * @param [in] notif_xpath XPath of the notification.
  * @param [in] values Event notification subtree nodes.
  * @param [in] value_cnt Number of items inside the values array.
@@ -949,14 +960,14 @@ int dm_validate_action_tree(dm_ctx_t *dm_ctx, dm_session_t *session, const char 
  * @param [out] res_ctx Context of \p res_data_tree in case a temporary one had to be created.
  * @return Error code (SR_ERR_OK on success)
  */
-int dm_validate_event_notif(dm_ctx_t *dm_ctx, dm_session_t *session, const char *notif_xpath, sr_val_t *values, size_t value_cnt,
+int dm_validate_event_notif(rp_ctx_t *rp_ctx, rp_session_t *session, const char *notif_xpath, sr_val_t *values, size_t value_cnt,
         sr_mem_ctx_t *sr_mem, sr_val_t **with_def, size_t *with_def_cnt, sr_node_t **with_def_tree, size_t *with_def_tree_cnt,
         struct lyd_node **res_data_tree, struct ly_ctx **res_ctx);
 
 /**
  * @brief Validates content of an event notification request with data represented using sr_node_t.
- * @param [in] dm_ctx DM context.
- * @param [in] session DM session.
+ * @param [in] rp_ctx RP context.
+ * @param [in] session RP session.
  * @param [in] notif_xpath XPath of the notification.
  * @param [in] trees Event notification subtree nodes.
  * @param [in] tree_cnt Number of items inside the values array.
@@ -969,21 +980,21 @@ int dm_validate_event_notif(dm_ctx_t *dm_ctx, dm_session_t *session, const char 
  * @param [out] res_ctx Context of \p res_data_tree in case a temporary one had to be created.
  * @return Error code (SR_ERR_OK on success)
  */
-int dm_validate_event_notif_tree(dm_ctx_t *dm_ctx, dm_session_t *session, const char *notif_xpath, sr_node_t *trees, size_t tree_cnt,
+int dm_validate_event_notif_tree(rp_ctx_t *rp_ctx, rp_session_t *session, const char *notif_xpath, sr_node_t *trees, size_t tree_cnt,
         sr_mem_ctx_t *sr_mem, sr_val_t **with_def, size_t *with_def_cnt, sr_node_t **with_def_tree, size_t *with_def_tree_cnt,
         struct lyd_node **res_data_tree, struct ly_ctx **res_ctx);
 
 /**
  * @brief Parses event notification with data in XML format (notification->type == NP_EV_NOTIF_DATA_XML) into desired
  * sysrepo format (values or trees).
- * @param [in] dm_ctx DM context.
- * @param [in] session DM session.
+ * @param [in] rp_ctx RP context.
+ * @param [in] session RP session.
  * @param [in] sr_mem Sysrepo memory context to use for output values (can be NULL).
  * @param [in,out] notification Notification to be processed.
  * @param [in] api_variant requested API variant (values/trees).
  * @return Error code (SR_ERR_OK on success)
  */
-int dm_parse_event_notif(dm_ctx_t *dm_ctx, dm_session_t *session, sr_mem_ctx_t *sr_mem,
+int dm_parse_event_notif(rp_ctx_t *rp_ctx, rp_session_t *session, sr_mem_ctx_t *sr_mem,
         np_ev_notification_t *notification, const sr_api_variant_t api_variant);
 
 /**

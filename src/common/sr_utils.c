@@ -223,7 +223,12 @@ sr_copy_first_ns(const char *xpath, char **namespace)
     if (xpath[0] != '/' || NULL == colon_pos) {
         return SR_ERR_INVAL_ARG;
     }
-    *namespace = strndup(xpath + 1, (colon_pos - xpath -1));
+    ++xpath;
+    if (xpath[0] == '/') {
+        ++xpath;
+    }
+
+    *namespace = strndup(xpath, colon_pos - xpath);
     CHECK_NULL_NOMEM_RETURN(*namespace);
     return SR_ERR_OK;
 }
@@ -234,27 +239,39 @@ sr_copy_all_ns(const char *xpath, char ***namespaces_p, size_t *ns_count_p)
     CHECK_NULL_ARG3(xpath, namespaces_p, ns_count_p);
 
     int rc = SR_ERR_OK;
-    char *colon_pos, **tmp, **namespaces = NULL;
+    char *xp, *sptr, *ptr, *cur_node, **tmp, **namespaces = NULL;
     size_t ns_count = 0;
 
     if (xpath[0] != '/') {
         return SR_ERR_INVAL_ARG;
     }
 
-    while ((colon_pos = strchr(xpath, ':'))) {
-        for (xpath = colon_pos; isalnum(xpath[-1]) || (xpath[-1] == '_') || (xpath[-1] == '-') || (xpath[-1] == '.'); --xpath);
-        tmp = realloc(namespaces, (ns_count + 1) * sizeof *namespaces);
-        CHECK_NULL_NOMEM_GOTO(tmp, rc, cleanup);
-        namespaces = tmp;
-        ns_count++;
+    xp = strdup(xpath);
 
-        namespaces[ns_count - 1] = strndup(xpath, colon_pos - xpath);
-        CHECK_NULL_NOMEM_GOTO(namespaces[ns_count - 1], rc, cleanup);
+    for (cur_node = strtok_r(xp, "/", &sptr); cur_node; cur_node = strtok_r(NULL, "/", &sptr)) {
+        if (cur_node[strlen(cur_node) - 1] == ']') {
+            ptr = strchr(cur_node, '[');
+            if (!ptr) {
+                rc = SR_ERR_INTERNAL;
+                goto cleanup;
+            }
+            *ptr = '\0';
+        }
 
-        xpath = colon_pos + 1;
+        ptr = strchr(cur_node, ':');
+        if (ptr) {
+            tmp = realloc(namespaces, (ns_count + 1) * sizeof *namespaces);
+            CHECK_NULL_NOMEM_GOTO(tmp, rc, cleanup);
+            namespaces = tmp;
+            ns_count++;
+
+            namespaces[ns_count - 1] = strndup(cur_node, ptr - cur_node);
+            CHECK_NULL_NOMEM_GOTO(namespaces[ns_count - 1], rc, cleanup);
+        }
     }
 
 cleanup:
+    free(xp);
     if (SR_ERR_OK == rc) {
         *namespaces_p = namespaces;
         *ns_count_p = ns_count;
@@ -540,7 +557,7 @@ sr_get_peer_eid(int fd, uid_t *uid, gid_t *gid)
 #endif /* !defined(HAVE_GETPEEREID) */
 
 int
-sr_save_data_tree_file(const char *file_name, const struct lyd_node *data_tree)
+sr_save_data_tree_file(const char *file_name, const struct lyd_node *data_tree, LYD_FORMAT format)
 {
     CHECK_NULL_ARG2(file_name, data_tree);
     int ret = 0;
@@ -554,7 +571,7 @@ sr_save_data_tree_file(const char *file_name, const struct lyd_node *data_tree)
     ret = lockf(fileno(f), F_LOCK, 0);
     CHECK_ZERO_LOG_GOTO(ret, rc, SR_ERR_IO, cleanup, "Failed to lock the file %s", file_name);
 
-    ret = lyd_print_file(f, data_tree, LYD_XML, LYP_WITHSIBLINGS | LYP_FORMAT);
+    ret = lyd_print_file(f, data_tree, format, LYP_WITHSIBLINGS | LYP_FORMAT);
     CHECK_ZERO_LOG_GOTO(ret, rc, SR_ERR_INTERNAL, cleanup, "Failed to write output into %s", file_name);
 
 cleanup:
@@ -641,6 +658,70 @@ sr_lys_node_get_data_parent(struct lys_node *node, bool augment)
             node = ((struct lys_node_augment *)node)->target;
         } else {
             node = node->parent;
+        }
+    }
+
+    return node;
+}
+
+struct lyd_node *
+sr_lyd_parse_fd(struct ly_ctx *ctx, int fd, LYD_FORMAT format, int options)
+{
+    struct lyd_node *node;
+    ssize_t ret;
+    char c;
+
+    node = lyd_parse_fd(ctx, fd, format, options);
+    if (!node) {
+        /* we will attempt to load the file in different format and then convert it based on the first character */
+        ret = read(fd, &c, 1);
+        if (ret < 1) {
+            return NULL;
+        } else {
+            lseek(fd, 0, SEEK_SET);
+        }
+
+        switch (c) {
+        case '<':
+            /* XML */
+            if (format == LYD_XML) {
+                return NULL;
+            }
+
+            SR_LOG_WRN("Attempting data file conversion from \"xml\" to \"%s\".", SR_FILE_FORMAT_EXT);
+            node = lyd_parse_fd(ctx, fd, LYD_XML, options);
+            break;
+        case '{':
+            /* JSON */
+            if (format == LYD_JSON) {
+                return NULL;
+            }
+
+            SR_LOG_WRN("Attempting data file conversion from \"json\" to \"%s\".", SR_FILE_FORMAT_EXT);
+            node = lyd_parse_fd(ctx, fd, LYD_JSON, options);
+            break;
+        case 'l':
+            /* LYB */
+            if (format == LYD_LYB) {
+                return NULL;
+            }
+
+            SR_LOG_WRN("Attempting data file conversion from \"lyb\" to \"%s\".", SR_FILE_FORMAT_EXT);
+            node = lyd_parse_fd(ctx, fd, LYD_LYB, options);
+            break;
+        default:
+            return NULL;
+        }
+
+        if (!node) {
+            return NULL;
+        }
+
+        /* now store it in the new format */
+        if ((ftruncate(fd, 0) == -1) || (lseek(fd, 0, SEEK_SET) == -1)) {
+            SR_LOG_ERR("Preparing conversion data fd failed (%s).", strerror(errno));
+        } else if (lyd_print_fd(fd, node, format, LYP_WITHSIBLINGS | LYP_FORMAT)) {
+            SR_LOG_ERR_MSG("Storing the converted data file failed.");
         }
     }
 
@@ -842,7 +923,7 @@ sr_libyang_leaf_get_type_sch(const struct lys_node_leaf *leaf)
 sr_type_t
 sr_libyang_leaf_get_type(const struct lyd_node_leaf_list *leaf)
 {
-    switch(leaf->value_type & LY_DATA_TYPE_MASK) {
+    switch(leaf->value_type) {
         case LY_TYPE_BINARY:
             return SR_BINARY_T;
         case LY_TYPE_BITS:
@@ -860,7 +941,12 @@ sr_libyang_leaf_get_type(const struct lyd_node_leaf_list *leaf)
         case LY_TYPE_INST:
             return SR_INSTANCEID_T;
         case LY_TYPE_LEAFREF:
-            return sr_libyang_leaf_get_type_sch(((struct lys_node_leaf *)leaf->schema)->type.info.lref.target);
+            /* if the target leafref was disconnected there is a problem in case the leaf is actually a union */
+            if ((struct lyd_node_leaf_list *)leaf->value.leafref) {
+                return sr_libyang_leaf_get_type((struct lyd_node_leaf_list *)leaf->value.leafref);
+            } else {
+                return sr_libyang_leaf_get_type_sch(((struct lys_node_leaf *)leaf->schema)->type.info.lref.target);
+            }
         case LY_TYPE_STRING:
             return SR_STRING_T;
         case LY_TYPE_INT8:
@@ -1095,26 +1181,13 @@ sr_libyang_get_actual_leaf_type(struct lys_type *base_info, LY_DATA_TYPE type)
     return NULL;
 }
 
-static int
-sr_mem_edit_string_va_wrapper(sr_mem_ctx_t *sr_mem, char **string_p, const char *format, ...)
-{
-    va_list arg_list;
-    int rc = SR_ERR_OK;
-
-    va_start(arg_list, format);
-    rc = sr_mem_edit_string_va(sr_mem, string_p, format, arg_list);
-    va_end(arg_list);
-
-    return rc;
-}
-
 int
 sr_libyang_leaf_copy_value(const struct lyd_node_leaf_list *leaf, sr_val_t *value)
 {
     CHECK_NULL_ARG2(leaf, value);
     int rc = SR_ERR_OK;
     struct lys_type *actual_type = NULL;
-    LY_DATA_TYPE type = leaf->value_type & LY_DATA_TYPE_MASK;
+    LY_DATA_TYPE type = leaf->value_type;
     const char *node_name = "(unknown)";
     if (NULL != leaf->schema && NULL != leaf->schema->name) {
         node_name = leaf->schema->name;
@@ -1171,21 +1244,17 @@ sr_libyang_leaf_copy_value(const struct lyd_node_leaf_list *leaf, sr_val_t *valu
         }
         return SR_ERR_OK;
     case LY_TYPE_IDENT:
-        if (NULL == leaf->schema || NULL == leaf->value.ident->name) {
+        if (NULL == leaf->value_str) {
             SR_LOG_ERR("Identity ref or schema in leaf '%s' is NULL", node_name);
             return SR_ERR_INTERNAL;
         }
-        if (lyd_node_module((struct lyd_node *)leaf) == lys_main_module(leaf->value.ident->module)) {
-            sr_mem_edit_string(value->_sr_mem, &value->data.identityref_val, leaf->value.ident->name);
-        } else {
-            sr_mem_edit_string_va_wrapper(value->_sr_mem, &value->data.identityref_val, "%s:%s",
-                                          lys_main_module(leaf->value.ident->module)->name, leaf->value.ident->name);
+
+        sr_mem_edit_string(value->_sr_mem, &value->data.identityref_val, leaf->value_str);
+        if (NULL == value->data.identityref_val) {
+            SR_LOG_ERR_MSG("Identityref duplication failed");
+            return SR_ERR_NOMEM;
         }
 
-        if (NULL == value->data.identityref_val) {
-            SR_LOG_ERR("Copy value failed for leaf '%s' of type 'identityref'", node_name);
-            return SR_ERR_INTERNAL;
-        }
         return SR_ERR_OK;
     case LY_TYPE_INST:
         return sr_libyang_val_str_to_sr_val(leaf->value_str, value->type, value);
@@ -1238,20 +1307,43 @@ int
 sr_libyang_anydata_copy_value(const struct lyd_node_anydata *node, sr_val_t *value)
 {
     CHECK_NULL_ARG2(node, value);
+    char *str_val = NULL;
+    bool free_str = false;
     const char *node_name = "(unknown)";
     if (NULL != node->schema && NULL != node->schema->name) {
         node_name = node->schema->name;
     }
 
-    if (LYD_ANYDATA_DATATREE == node->value_type || LYD_ANYDATA_XML == node->value_type) {
-        SR_LOG_ERR("Unsupported (non-string) anydata value type for node '%s'", node_name);
+    switch (node->value_type) {
+    case LYD_ANYDATA_CONSTSTRING:
+    case LYD_ANYDATA_STRING:
+    case LYD_ANYDATA_JSON:
+    case LYD_ANYDATA_JSOND:
+    case LYD_ANYDATA_SXML:
+    case LYD_ANYDATA_SXMLD:
+    case LYD_ANYDATA_LYBD:
+    case LYD_ANYDATA_LYB:
+        str_val = (char *)node->value.str;
+        break;
+    case LYD_ANYDATA_XML:
+        lyxml_print_mem(&str_val, node->value.xml, LYXML_PRINT_FORMAT);
+        free_str = true;
+        break;
+    case LYD_ANYDATA_DATATREE:
+        lyd_print_mem(&str_val, node->value.tree, LYD_JSON, LYP_FORMAT | LYP_WITHSIBLINGS);
+        free_str = true;
+        break;
     }
-    if ((NULL != node->schema) && (NULL != node->value.str)) {
+
+    if ((NULL != node->schema) && (NULL != str_val)) {
         switch (node->schema->nodetype) {
             case LYS_ANYXML:
                 sr_mem_edit_string(value->_sr_mem, &value->data.anyxml_val, node->value.str);
                 if (NULL == value->data.anyxml_val) {
                     SR_LOG_ERR_MSG("String duplication failed");
+                    if (free_str) {
+                        free(str_val);
+                    }
                     return SR_ERR_NOMEM;
                 }
                 break;
@@ -1259,20 +1351,29 @@ sr_libyang_anydata_copy_value(const struct lyd_node_anydata *node, sr_val_t *val
                 sr_mem_edit_string(value->_sr_mem, &value->data.anydata_val, node->value.str);
                 if (NULL == value->data.anydata_val) {
                     SR_LOG_ERR_MSG("String duplication failed");
+                    if (free_str) {
+                        free(str_val);
+                    }
                     return SR_ERR_NOMEM;
                 }
                 break;
             default:
                 SR_LOG_ERR("Copy value failed for anydata node '%s'", node_name);
+                if (free_str) {
+                    free(str_val);
+                }
                 return SR_ERR_INTERNAL;
         }
     }
 
+    if (free_str) {
+        free(str_val);
+    }
     return SR_ERR_OK;
 }
 
 /** max dec64 format string length */
-#define MAX_FMT_LEN 6
+#define MAX_FMT_LEN 7
 
 static int
 sr_dec64_to_str(double val, const struct lys_node *schema_node, char **out)
@@ -1501,6 +1602,9 @@ sr_copy_node_to_tree_internal(const struct lyd_node *top_parent, const struct ly
             break;
         case LYS_LIST:
             sr_tree->type = SR_LIST_T;
+            break;
+        case LYS_NOTIF:
+            sr_tree->type = SR_NOTIFICATION_T;
             break;
         case LYS_ANYXML:
         case LYS_ANYDATA:
@@ -1826,14 +1930,14 @@ sr_subtree_to_dt(struct ly_ctx *ly_ctx, const sr_node_t *sr_tree, bool output, s
                     *data_tree = node;
                 }
                 if (NULL == node) {
-                    SR_LOG_ERR("Failed to create tree root node (leaf) ('%s'): %s", xpath, ly_errmsg());
+                    SR_LOG_ERR("Failed to create tree root node (leaf) ('%s'): %s", xpath, ly_errmsg(ly_ctx));
                     return SR_ERR_INTERNAL;
                 }
             } else {
                 node = lyd_new_leaf(parent, module, sr_tree->name, string_val);
                 free(string_val);
                 if (NULL == node) {
-                    SR_LOG_ERR("Unable to add leaf node (named '%s'): %s", sr_tree->name, ly_errmsg());
+                    SR_LOG_ERR("Unable to add leaf node (named '%s'): %s", sr_tree->name, ly_errmsg(ly_ctx));
                     return SR_ERR_INTERNAL;
                 }
             }
@@ -3137,4 +3241,48 @@ sr_str_to_time(char *time_str, time_t *time)
 cleanup:
     free(time_str_copy);
     return rc;
+}
+
+int sr_features_clone(const struct lys_module *module_src, const struct lys_module *module_tgt)
+{
+    int i, j;
+
+    uint8_t fsize_src, fsize_tgt;
+    struct lys_feature *f_src, *f_tgt;
+
+    if (module_src->inc_size != module_tgt->inc_size) {
+        SR_LOG_ERR("Features cannot be cloned %s.", module_src->name);
+        return EXIT_FAILURE;
+    }
+
+    for (i = -1; i < module_src->inc_size; i++) {
+        if (i == -1) {
+            fsize_src = module_src->features_size;
+            fsize_tgt = module_tgt->features_size;
+            f_src = module_src->features;
+            f_tgt = module_tgt->features;
+        } else {
+            fsize_src = module_src->inc[i].submodule->features_size;
+            fsize_tgt = module_tgt->inc[i].submodule->features_size;
+            f_src = module_src->inc[i].submodule->features;
+            f_tgt = module_tgt->inc[i].submodule->features;
+        }
+
+        if (fsize_src != fsize_tgt) {
+            SR_LOG_ERR("Features cannot be cloned %s.", module_src->name);
+            return EXIT_FAILURE;
+        }
+
+        for (j = 0; j < fsize_src; j++) {
+            if (!strcmp(f_src[j].name, f_tgt[j].name)) {
+                f_tgt[j].flags |= f_src[j].flags & LYS_FENABLED;
+            }
+            else {
+                SR_LOG_ERR("Features cannot be cloned %s.", module_src->name);
+                return EXIT_FAILURE;
+            }
+        }
+    }
+
+    return EXIT_SUCCESS;
 }

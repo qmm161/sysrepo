@@ -115,12 +115,14 @@ sr_error:
     return rc;
 
 sys_error:
+    sr_free_val(val);
     SRP_LOG_ERR("OVEN: Oven config change callback failed: %s.", strerror(rc));
     return SR_ERR_OPERATION_FAILED;
 }
 
 static int
-oven_state_cb(const char *xpath, sr_val_t **values, size_t *values_cnt, void *private_ctx)
+oven_state_cb(const char *xpath, sr_val_t **values, size_t *values_cnt,
+        uint64_t request_id, const char *original_xpath, void *private_ctx)
 {
     sr_val_t *vals;
     int rc;

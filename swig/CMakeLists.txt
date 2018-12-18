@@ -6,7 +6,7 @@ remove_definitions(-DSWIGLUA)
 
 # find SWIG package
 if(GEN_LANGUAGE_BINDINGS)
-    find_package(SWIG)
+    find_package(SWIG 3.0.12 REQUIRED)
     if(NOT SWIG_FOUND)
         message(WARNING "SWIG library not found")
     else()
@@ -17,6 +17,9 @@ endif()
 # find Lua package
 if(GEN_LUA_BINDINGS AND SWIG_FOUND)
     message(STATUS "Lua version ${GEN_LUA_VERSION} was selected")
+    unset(LUA_LIBRARY CACHE)
+    unset(LUA_INCLUDE_DIR CACHE)
+    unset(LUA_INCLUDE_PREFIX CACHE)
     if(${GEN_LUA_VERSION} STREQUAL "5.1")
         find_package(Lua51)
         if(NOT LUA51_FOUND)
@@ -42,7 +45,11 @@ endif()
 
 # find Python package
 if(GEN_PYTHON_BINDINGS AND SWIG_FOUND)
-    message("-- Python version ${GEN_PYTHON_VERSION} was selected")
+    message(STATUS "Python version ${GEN_PYTHON_VERSION} was selected")
+    unset(PYTHON_LIBRARY CACHE)
+    unset(PYTHON_EXECUTABLE CACHE)
+    unset(PYTHON_INCLUDE_DIR CACHE)
+    unset(PYTHON_LIBRARY_DEBUG CACHE)
     if(${GEN_PYTHON_VERSION} STREQUAL "2")
         find_package(PythonLibs 2)
         find_package(PythonInterp)
@@ -87,13 +94,13 @@ set(SYSREPO_CPP_SOURCES
     ${CMAKE_SOURCE_DIR}/swig/cpp/src/Internal.cpp)
 
 set(SYSREPO_HPP_SOURCES
-    ${CMAKE_SOURCE_DIR}/swig/cpp/src/Sysrepo.h
-        ${CMAKE_SOURCE_DIR}/swig/cpp/src/Connection.h
-        ${CMAKE_SOURCE_DIR}/swig/cpp/src/Session.h
-        ${CMAKE_SOURCE_DIR}/swig/cpp/src/Struct.h
-        ${CMAKE_SOURCE_DIR}/swig/cpp/src/Xpath.h
-        ${CMAKE_SOURCE_DIR}/swig/cpp/src/Tree.h
-    ${CMAKE_SOURCE_DIR}/swig/cpp/src/Internal.h)
+    ${CMAKE_SOURCE_DIR}/swig/cpp/src/Sysrepo.hpp
+        ${CMAKE_SOURCE_DIR}/swig/cpp/src/Connection.hpp
+        ${CMAKE_SOURCE_DIR}/swig/cpp/src/Session.hpp
+        ${CMAKE_SOURCE_DIR}/swig/cpp/src/Struct.hpp
+        ${CMAKE_SOURCE_DIR}/swig/cpp/src/Xpath.hpp
+        ${CMAKE_SOURCE_DIR}/swig/cpp/src/Tree.hpp
+    ${CMAKE_SOURCE_DIR}/swig/cpp/src/Internal.hpp)
 
 add_library(Sysrepo-cpp SHARED ${SYSREPO_CPP_SOURCES})
 SET_TARGET_PROPERTIES(Sysrepo-cpp PROPERTIES
@@ -147,12 +154,8 @@ if(GEN_CPP_BINDINGS)
     endif()
 endif()
 
-if(PYTHONLIBS_FOUND AND PYTHONINTERP_FOUND AND ${GEN_PYTHON_VERSION} STREQUAL "2")
-    add_subdirectory(python2)
-endif()
-
-if(PYTHONLIBS_FOUND AND PYTHONINTERP_FOUND AND ${GEN_PYTHON_VERSION} STREQUAL "3")
-    add_subdirectory(python3)
+if(PYTHONLIBS_FOUND AND PYTHONINTERP_FOUND AND (${GEN_PYTHON_VERSION} STREQUAL "2" OR ${GEN_PYTHON_VERSION} STREQUAL "3"))
+    add_subdirectory(python)
 endif()
 
 if(JAVA_FOUND)

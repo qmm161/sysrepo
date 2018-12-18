@@ -40,7 +40,7 @@ new_nacm_config(test_nacm_cfg_t **nacm_config_p)
     nacm_config->ly_ctx = ly_ctx_new(TEST_SCHEMA_SEARCH_DIR, 0);
     assert_non_null(nacm_config->ly_ctx);
 
-    assert_non_null(ly_ctx_load_module(nacm_config->ly_ctx, "ietf-netconf-acm@2012-02-22", NULL));
+    assert_non_null(ly_ctx_load_module(nacm_config->ly_ctx, "ietf-netconf-acm@2018-02-14", NULL));
 
     *nacm_config_p = nacm_config;
 }
@@ -50,7 +50,7 @@ save_nacm_config(test_nacm_cfg_t *nacm_config)
 {
     /* validate & save */
     assert_int_equal(0, lyd_validate(&nacm_config->root, LYD_OPT_STRICT | LYD_OPT_CONFIG, nacm_config->ly_ctx));
-    assert_int_equal(SR_ERR_OK, sr_save_data_tree_file(NACM_MODULE_DATA_FILE_NAME, nacm_config->root));
+    assert_int_equal(SR_ERR_OK, sr_save_data_tree_file(NACM_MODULE_DATA_FILE_NAME, nacm_config->root, SR_FILE_FORMAT_LY));
 }
 
 void
